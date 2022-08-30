@@ -1,4 +1,4 @@
-module github.com/kavanahuang/log
+module github.com/kavanahuang/logs
 
 go 1.18
 
