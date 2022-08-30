@@ -31,8 +31,6 @@ const (
 	OFF
 )
 
-var fileLog *Services
-
 type LoggerConf struct {
 	FileDir  string
 	FileName string
@@ -40,7 +38,7 @@ type LoggerConf struct {
 	Level    string
 }
 
-type Services struct {
+var (
 	fileDir  string
 	fileName string
 	prefix   string
@@ -50,7 +48,7 @@ type Services struct {
 	logLevel LEVEL
 	mutex    *sync.RWMutex
 	logChan  chan string
-}
+)
 
 // 初始化日志配置
 func BootLogger() (err error) {
@@ -61,67 +59,63 @@ func BootLogger() (err error) {
 		Level:    GetLogsLevel(),
 	}
 
-	f := &Services{
-		fileDir:  conf.FileDir,
-		fileName: conf.FileName,
-		prefix:   conf.Prefix,
-		mutex:    new(sync.RWMutex),
-		logChan:  make(chan string, 8000),
-	}
+	fileDir = conf.FileDir
+	fileName = conf.FileName
+	prefix = conf.Prefix
+	mutex = new(sync.RWMutex)
+	logChan = make(chan string, 8000)
 
 	if strings.EqualFold(conf.Level, "OFF") {
-		f.logLevel = OFF
+		logLevel = OFF
 	} else if strings.EqualFold(conf.Level, "TRACE") {
-		f.logLevel = TRACE
+		logLevel = TRACE
 	} else if strings.EqualFold(conf.Level, "INFO") {
-		f.logLevel = INFO
+		logLevel = INFO
 	} else if strings.EqualFold(conf.Level, "WARN") {
-		f.logLevel = WARN
+		logLevel = WARN
 	} else if strings.EqualFold(conf.Level, "ERROR") {
-		f.logLevel = ERROR
+		logLevel = ERROR
 	} else {
-		f.logLevel = DEBUG
+		logLevel = DEBUG
 	}
 
 	t, _ := time.Parse(DateFormat, time.Now().Format(DateFormat))
-	f.date = &t
+	date = &t
 
-	if f.isMustSplit() {
-		if err = f.split(); err != nil {
+	if isMustSplit() {
+		if err = split(); err != nil {
 			return
 		}
 
 	} else {
-		f.isExistOrCreate()
+		isExistOrCreate()
 
-		logFile := filepath.Join(f.fileDir, f.fileName)
-
-		f.logFile, err = os.OpenFile(logFile, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
+		logFilepath := filepath.Join(fileDir, fileName)
+		logFile, err = os.OpenFile(logFilepath, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
 		if err != nil {
 			return
 		}
 
-		f.logger = log.New(f.logFile, f.prefix, log.LstdFlags|log.Lmicroseconds)
+		logger = log.New(logFile, prefix, log.LstdFlags|log.Lmicroseconds)
 	}
 
-	go f.logWriter()
-	go f.fileMonitor()
+	go logWriter()
+	go fileMonitor()
 
-	fileLog = f
 	return
 }
 
 // 日志文件是否分割
-func (f *Services) isMustSplit() bool {
+func isMustSplit() bool {
 	t, _ := time.Parse(DateFormat, time.Now().Format(DateFormat))
-	return t.After(*f.date)
+	return t.After(*date)
 }
 
 // 检查日志文件目录是否存在，不存在则创建
-func (f *Services) isExistOrCreate() {
-	_, err := os.Stat(f.fileDir)
+func isExistOrCreate() {
+	_, err := os.Stat(fileDir)
 	if err != nil && !os.IsExist(err) {
-		mkdirErr := os.Mkdir(f.fileDir, 0755)
+		mkdirErr := os.Mkdir(fileDir, 0755)
 		if mkdirErr != nil {
 			log.Println("Create dir failed, error: ", mkdirErr)
 		}
@@ -129,58 +123,57 @@ func (f *Services) isExistOrCreate() {
 }
 
 // 分割日志
-func (f *Services) split() (err error) {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
+func split() (err error) {
+	mutex.Lock()
+	defer mutex.Unlock()
 
-	logFile := filepath.Join(f.fileDir, f.fileName)
-	logFileBak := logFile + "." + f.date.Format(DateFormat)
+	sourceLog := filepath.Join(fileDir, fileName)
+	targetLog := sourceLog + "." + date.Format(DateFormat)
 
-	if f.logFile != nil {
-		_ = f.logFile.Close()
+	if logFile != nil {
+		_ = logFile.Close()
 	}
 
-	err = os.Rename(logFile, logFileBak)
+	err = os.Rename(sourceLog, targetLog)
 	if err != nil {
 		return
 	}
 
 	t, _ := time.Parse(DateFormat, time.Now().Format(DateFormat))
-	f.date = &t
+	date = &t
 
-	f.logFile, err = os.OpenFile(logFile, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
+	logFile, err = os.OpenFile(sourceLog, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
 	if err != nil {
 		return
 	}
 
-	f.logger = log.New(f.logFile, f.prefix, log.LstdFlags|log.Lmicroseconds)
+	logger = log.New(logFile, prefix, log.LstdFlags|log.Lmicroseconds)
 	return
 }
 
 // 日志写入
-func (f *Services) logWriter() {
+func logWriter() {
 	defer func() { recover() }()
 
 	for {
-		str := <-f.logChan
-
-		f.mutex.RLock()
-		_ = f.logger.Output(2, str)
-		f.mutex.RUnlock()
+		str := <-logChan
+		mutex.RLock()
+		_ = logger.Output(2, str)
+		mutex.RUnlock()
 	}
 }
 
 // 日志分割监控
-func (f *Services) fileMonitor() {
+func fileMonitor() {
 	defer func() { recover() }()
 
 	timer := time.NewTicker(30 * time.Second)
 	for {
 		<-timer.C
 
-		if f.isMustSplit() {
-			if err := f.split(); err != nil {
-				f.Error("Log split error: %v\n", err)
+		if isMustSplit() {
+			if err := split(); err != nil {
+				Error("Log split error: %v\n", err)
 			}
 		}
 	}
@@ -188,92 +181,92 @@ func (f *Services) fileMonitor() {
 
 // 关闭日志
 func CloseLogger() {
-	if fileLog != nil {
-		close(fileLog.logChan)
-		fileLog.logger = nil
-		_ = fileLog.logFile.Close()
+	if logChan != nil {
+		close(logChan)
+		logger = nil
+		_ = logFile.Close()
 	}
 }
 
 // 输出格式化日志
-func (f *Services) Printf(format string, v ...interface{}) {
+func Printf(format string, v ...interface{}) {
 	_, file, line, _ := runtime.Caller(1)
-	fileLog.logChan <- fmt.Sprintf("[%v:%v]", fmt.Sprintf(format, v...)+filepath.Base(file), line)
+	logChan <- fmt.Sprintf("[%v:%v]", fmt.Sprintf(format, v...)+filepath.Base(file), line)
 }
 
 // 输出格式化日志
-func (f *Services) Print(v ...interface{}) {
+func Print(v ...interface{}) {
 	_, file, line, _ := runtime.Caller(1)
-	fileLog.logChan <- fmt.Sprintf("[%v:%v]", fmt.Sprint(v...)+filepath.Base(file), line)
+	logChan <- fmt.Sprintf("[%v:%v]", fmt.Sprint(v...)+filepath.Base(file), line)
 }
 
 // 输出格式化日志
-func (f *Services) Println(v ...interface{}) {
+func Println(v ...interface{}) {
 	_, file, line, _ := runtime.Caller(1)
-	fileLog.logChan <- fmt.Sprintf("[%v:%v]", filepath.Base(file), line) + fmt.Sprintln(v...)
+	logChan <- fmt.Sprintf("[%v:%v]", filepath.Base(file), line) + fmt.Sprintln(v...)
 }
 
 // 输出致命错误日志, 并退出系统
-func (f *Services) Fatal(v ...interface{}) {
+func Fatal(v ...interface{}) {
 	_, file, line, _ := runtime.Caller(1)
-	fileLog.logChan <- fmt.Sprintf("%v:%v]", fmt.Sprintf("[ERROR] [")+filepath.Base(file), line) + fmt.Sprintln(v...)
+	logChan <- fmt.Sprintf("%v:%v]", fmt.Sprintf("[ERROR] [")+filepath.Base(file), line) + fmt.Sprintln(v...)
 	_ = log.Output(2, fmt.Sprintln(v))
 	os.Exit(1)
 }
 
 // 输出致命错误日志, 并退出系统
-func (f *Services) Fatally(v ...interface{}) {
+func Fatally(v ...interface{}) {
 	_, file, line, _ := runtime.Caller(1)
-	fileLog.logChan <- fmt.Sprintf("%v:%v]", fmt.Sprintf("[ERROR] [")+filepath.Base(file), line) + fmt.Sprintln(v...)
+	logChan <- fmt.Sprintf("%v:%v]", fmt.Sprintf("[ERROR] [")+filepath.Base(file), line) + fmt.Sprintln(v...)
 	_ = log.Output(2, fmt.Sprintln(v))
 	os.Exit(1)
 }
 
 // 输出跟踪日志
-func (f *Services) Trace(format string, v ...interface{}) {
+func Trace(format string, v ...interface{}) {
 	_, file, line, _ := runtime.Caller(2)
-	if fileLog.logLevel <= TRACE {
-		fileLog.logChan <- fmt.Sprintf("%v:%v]", fmt.Sprintf("[TRACE] [")+filepath.Base(file), line) + fmt.Sprintf(" "+format, v...)
+	if logLevel <= TRACE {
+		logChan <- fmt.Sprintf("%v:%v]", fmt.Sprintf("[TRACE] [")+filepath.Base(file), line) + fmt.Sprintf(" "+format, v...)
 	}
 }
 
 // 输出调试日志
-func (f *Services) Debug(format string, v ...interface{}) {
+func Debug(format string, v ...interface{}) {
 	_, file, line, _ := runtime.Caller(1)
 	s := fmt.Sprintf("%v:%v:%v%v]", fmt.Sprintf("[DEBUG] [")+filepath.Base(file), line, format, v)
 	fmt.Printf("%s\033[0;40;34m%s\033[0m\n", setNowTime(), s)
-	if fileLog.logLevel <= DEBUG {
-		fileLog.logChan <- fmt.Sprintf("%v:%v]", fmt.Sprintf("[DEBUG] [")+filepath.Base(file), line) + fmt.Sprintf(" "+format, v...)
+	if logLevel <= DEBUG {
+		logChan <- fmt.Sprintf("%v:%v]", fmt.Sprintf("[DEBUG] [")+filepath.Base(file), line) + fmt.Sprintf(" "+format, v...)
 	}
 }
 
 // 输出信息日志
-func (f *Services) Info(format string, v ...interface{}) {
+func Info(format string, v ...interface{}) {
 	_, file, line, _ := runtime.Caller(1)
 	s := fmt.Sprintf("%v:%v:%v%v]", fmt.Sprintf("[INFO] [")+filepath.Base(file), line, format, v)
 	fmt.Printf("%s\033[0;40;32m%s\033[0m\n", setNowTime(), s)
-	if fileLog.logLevel <= INFO {
-		fileLog.logChan <- fmt.Sprintf("%v:%v]", fmt.Sprintf("[INFO] [")+filepath.Base(file), line) + fmt.Sprintf(" "+format, v...)
+	if logLevel <= INFO {
+		logChan <- fmt.Sprintf("%v:%v]", fmt.Sprintf("[INFO] [")+filepath.Base(file), line) + fmt.Sprintf(" "+format, v...)
 	}
 }
 
 // 输出警告日志
-func (f *Services) Warning(format string, v ...interface{}) {
+func Warning(format string, v ...interface{}) {
 	_, file, line, _ := runtime.Caller(1)
 	s := fmt.Sprintf("%v:%v:%v%v]", fmt.Sprintf("[WARN] [")+filepath.Base(file), line, format, v)
 	fmt.Printf("%s\033[0;40;33m%s\033[0m\n", setNowTime(), s)
-	if fileLog.logLevel <= WARN {
-		fileLog.logChan <- fmt.Sprintf("%v:%v]", fmt.Sprintf("[WARN] [")+filepath.Base(file), line) + fmt.Sprintf(" "+format, v...)
+	if logLevel <= WARN {
+		logChan <- fmt.Sprintf("%v:%v]", fmt.Sprintf("[WARN] [")+filepath.Base(file), line) + fmt.Sprintf(" "+format, v...)
 	}
 }
 
 // 输出错误日志
-func (f *Services) Error(format string, v ...interface{}) {
+func Error(format string, v ...interface{}) {
 	_, file, line, _ := runtime.Caller(1)
 	s := fmt.Sprintf("%v:%v:%v%v]", fmt.Sprintf("[ERROR] [")+filepath.Base(file), line, format, v)
 	fmt.Printf("%s\033[0;40;31m%s\033[0m\n", setNowTime(), s)
-	if fileLog.logLevel <= ERROR {
-		fileLog.logChan <- fmt.Sprintf("%v:%v]", fmt.Sprintf("[ERROR] [")+filepath.Base(file), line) + fmt.Sprintf(" "+format, v...)
+	if logLevel <= ERROR {
+		logChan <- fmt.Sprintf("%v:%v]", fmt.Sprintf("[ERROR] [")+filepath.Base(file), line) + fmt.Sprintf(" "+format, v...)
 	}
 }
 
