@@ -64,18 +64,20 @@ func BootLogger() (err error) {
 	prefix = conf.Prefix
 	mutex = new(sync.RWMutex)
 	logChan = make(chan string, 8000)
+	level := strings.ToUpper(conf.Level)
 
-	if strings.EqualFold(conf.Level, "OFF") {
+	switch level {
+	case "OFF":
 		logLevel = OFF
-	} else if strings.EqualFold(conf.Level, "TRACE") {
+	case "TRACE":
 		logLevel = TRACE
-	} else if strings.EqualFold(conf.Level, "INFO") {
+	case "INFO":
 		logLevel = INFO
-	} else if strings.EqualFold(conf.Level, "WARN") {
+	case "WARN":
 		logLevel = WARN
-	} else if strings.EqualFold(conf.Level, "ERROR") {
+	case "ERROR":
 		logLevel = ERROR
-	} else {
+	default:
 		logLevel = DEBUG
 	}
 
